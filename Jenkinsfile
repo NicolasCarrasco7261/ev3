@@ -23,7 +23,7 @@ pipeline {
         APP_URL = 'http://127.0.0.1:5000'
         SONARQUBE_ENV = 'SonarQube'
         SONAR_SCANNER_TOOL = 'SonarScanner'
-        DEPENDENCY_CHECK_TOOL = 'OWASP-Dependency-Check'
+        DEPENDENCY_CHECK_DOCKER_IMAGE = 'owasp/dependency-check:latest'
         ZAP_DOCKER_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
     }
 
@@ -124,26 +124,32 @@ pipeline {
                 stage('OWASP Dependency-Check') {
                     steps {
                         script {
-                            def dependencyCheckHome = tool env.DEPENDENCY_CHECK_TOOL
-
                             runCommand(
                                 """
                                 mkdir -p dependency-check-report
-                                "${dependencyCheckHome}/bin/dependency-check.sh" \
+                                docker run --rm \
+                                  -v "\$PWD:/src:ro" \
+                                  -v "\$PWD/dependency-check-report:/report" \
+                                  -v dependency-check-data:/usr/share/dependency-check/data \
+                                  ${env.DEPENDENCY_CHECK_DOCKER_IMAGE} \
                                   --project ev3 \
-                                  --scan . \
+                                  --scan /src \
                                   --format ALL \
-                                  --out dependency-check-report \
-                                  --exclude .venv
+                                  --out /report \
+                                  --exclude /src/.venv/**
                                 """,
                                 """
                                 if not exist dependency-check-report mkdir dependency-check-report
-                                "${dependencyCheckHome}\\bin\\dependency-check.bat" ^
+                                docker run --rm ^
+                                  -v "%CD%:/src:ro" ^
+                                  -v "%CD%\\dependency-check-report:/report" ^
+                                  -v dependency-check-data:/usr/share/dependency-check/data ^
+                                  ${env.DEPENDENCY_CHECK_DOCKER_IMAGE} ^
                                   --project ev3 ^
-                                  --scan . ^
+                                  --scan /src ^
                                   --format ALL ^
-                                  --out dependency-check-report ^
-                                  --exclude .venv
+                                  --out /report ^
+                                  --exclude /src/.venv/**
                                 """
                             )
                         }
@@ -159,7 +165,7 @@ pipeline {
                 stage('OWASP ZAP') {
                     steps {
                         script {
-                            def zapTarget = isUnix() ? env.APP_URL : "http://host.docker.internal:${env.APP_PORT}"
+                            def zapTarget = isUnix() ? "${env.APP_URL}/hello?name=zap" : "http://host.docker.internal:${env.APP_PORT}/hello?name=zap"
 
                             runCommand(
                                 """
@@ -167,6 +173,7 @@ pipeline {
                                 docker run --rm --network host \
                                   -v "\$PWD:/zap/wrk/:rw" \
                                   ${env.ZAP_DOCKER_IMAGE} zap-baseline.py \
+                                  -I \
                                   -t "${zapTarget}" \
                                   -r zap-report/zap-report.html \
                                   -J zap-report/zap-report.json \
@@ -177,6 +184,7 @@ pipeline {
                                 docker run --rm ^
                                   -v "%CD%:/zap/wrk/:rw" ^
                                   ${env.ZAP_DOCKER_IMAGE} zap-baseline.py ^
+                                  -I ^
                                   -t "${zapTarget}" ^
                                   -r zap-report/zap-report.html ^
                                   -J zap-report/zap-report.json ^
